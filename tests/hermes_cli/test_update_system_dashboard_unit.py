@@ -13,6 +13,8 @@ the manual command. Three things then went wrong after it:
 
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -303,3 +305,26 @@ def test_next_run_carries_a_unit_row_forward_from_the_previous_receipt(monkeypat
         update_receipt.begin_update_receipt()
         carried = update_receipt._current.get().data["carried_manual_serves"]
     assert [row["pid"] for row in carried] == [DASH_PID]
+
+
+@pytest.mark.parametrize("reason, hinted", [
+    ("serve/dashboard unit(s) hermes-dashboard were not restarted onto the new code; see the systemctl advice above", False),
+    ("gateways may still run pre-update code or were stopped without a successor; recover with `hermes gateway restart`", True),
+])
+def test_desktop_handoffs_add_the_gateway_hint_only_when_gateways_are_blamed(capsys, reason, hinted):
+    """#141071: both Desktop hand-offs keyed the "Run hermes gateway restart" hint on the step id alone.
+    Pin each script's own predicate against the line the producer prints."""
+    import re
+    from pathlib import Path
+
+    update_receipt.record_followup("gateway_restart", reason)
+    out = capsys.readouterr().out
+    scripts = Path(__file__).resolve().parents[2] / "scripts/desktop-update"
+    posix = (scripts / "posix.sh").read_text(encoding="utf-8")
+    grep = re.search(r'grep -Eq "(Update follow-up .gateway_restart[^"]+)"', posix).group(1)
+    probe = subprocess.run(["bash", "-c", f'printf "%s\\n" "$OUT" | grep -Eq "{grep}"'], env={**os.environ, "OUT": out},
+                           capture_output=True, text=True, encoding="utf-8", check=False)
+    assert (probe.returncode == 0) is hinted
+    ps_pattern = re.search(r'-match "(Update follow-up .gateway_restart[^"]+)"',
+                           (scripts / "windows.ps1").read_text(encoding="utf-8")).group(1)
+    assert bool(re.search(ps_pattern, out)) is hinted

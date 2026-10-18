@@ -116,7 +116,9 @@ def test_every_owed_followup_reaches_the_desktop_result(tmp_path, step):
     """Contract C3 (review regression 1): a committed update exits 0, but a follow-up it still owes
     (a gateway proven to run old code, a refused resume, a lost completion) must never end as a
     plain "Update complete." -- the result names the owed step."""
-    line = f"  ⚠ Update follow-up '{step}' did not finish: old code still serving (the next launch retries it)"
+    reason = ("gateways may still run pre-update code or were stopped without a successor; recover with "
+              "`hermes gateway restart`" if step == "gateway_restart" else "old code still serving")
+    line = f"  ⚠ Update follow-up '{step}' did not finish: {reason} (the next launch retries it)"
     _run_handoff(tmp_path, [], f"{line}\n✓ Update complete!")
 
     result = json.loads((tmp_path / ".hermes-update-result.json").read_text(encoding="utf-8-sig"))
@@ -124,6 +126,19 @@ def test_every_owed_followup_reaches_the_desktop_result(tmp_path, step):
     assert result["manual"] is True
     assert step in result["message"]
     assert ("hermes gateway restart" in result["message"]) is (step == "gateway_restart")
+
+
+@requires_posix_handoff
+def test_dashboard_only_gateway_restart_followup_gets_no_gateway_hint(tmp_path):
+    """#141071: the step id stays gateway_restart, but a restart owed only for a serve/dashboard unit
+    must not tell the user to run `hermes gateway restart`, which never touches that unit."""
+    line = ("  ⚠ Update follow-up 'gateway_restart' did not finish: serve/dashboard unit(s) hermes-dashboard were not"
+            " restarted onto the new code; see the systemctl advice above (the next launch retries it)")
+    _run_handoff(tmp_path, [], f"{line}\n✓ Update complete!")
+
+    result = json.loads((tmp_path / ".hermes-update-result.json").read_text(encoding="utf-8-sig"))
+    assert result["manual"] is True and "gateway_restart" in result["message"]
+    assert "hermes gateway restart" not in result["message"]
 
 
 @requires_posix_handoff
